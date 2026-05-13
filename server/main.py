@@ -21,11 +21,16 @@ HOW TO RUN:
 
 import logging
 from contextlib import asynccontextmanager
-
+from .broadcaster import broadcaster
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from pathlib import Path
 
 from .models import create_tables
 from .routes import router
+
+GUI_DIR = Path(__file__).parent.parent / "gui"
 
 
 logging.basicConfig(
@@ -49,3 +54,8 @@ app = FastAPI(
 )
 
 app.include_router(router)
+app.mount("/gui", StaticFiles(directory=GUI_DIR), name="gui")
+
+@app.get("/")
+def index():
+    return FileResponse(GUI_DIR / "index.html")

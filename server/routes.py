@@ -73,7 +73,9 @@ from .schemas import (
 from .auth import hash_password, verify_password, create_token, require_auth
 from .crypto import encrypt, decrypt
 
-
+import json
+from .broadcaster import broadcaster
+from sse_starlette.sse import EventSourceResponse
 log = logging.getLogger(__name__)
 router = APIRouter()
 
@@ -81,7 +83,6 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 # TODO 1 — Register a new user
 # ---------------------------------------------------------------------------
-@router.post("/register", status_code=status.HTTP_201_CREATED)
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 def register(body: RegisterRequest, db: Session = Depends(get_db)):
     existing_user = db.query(User).filter(User.username == body.username).first()
@@ -114,7 +115,7 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
 # TODO 3 — Send a message (authenticated)
 # ---------------------------------------------------------------------------
 @router.post("/messages", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
-def send_message(
+async def send_message(  # הוספת async
     body: SendMessageRequest,
     db: Session = Depends(get_db),
     username: str = Depends(require_auth),
@@ -130,13 +131,18 @@ def send_message(
     db.commit()
     db.refresh(new_msg)
 
-    return MessageResponse(
+   
+    response_data = MessageResponse(
         id=new_msg.id,
         sender=new_msg.sender,
         recipient=new_msg.recipient,
-        content=body.content,
+        content=body.content,  
         created_at=new_msg.created_at
     )
+
+    await broadcaster.publish(response_data.model_dump(mode="json"), target_user=None)
+    
+    return response_data
 
 # ---------------------------------------------------------------------------
 # TODO 4 — Fetch messages (authenticated)
@@ -162,3 +168,21 @@ def get_messages(
         ))
     
     return results
+
+
+
+@router.get("/stream")
+async def message_stream(
+    db: Session = Depends(get_db),
+    username: str = Depends(require_auth),
+):
+    """
+    נתיב SSE שמאפשר למשתמש לקבל הודעות בזמן אמת מהתור האישי שלו.
+    """
+    async def event_generator():
+        async with broadcaster.subscribe(username) as queue:
+            while True:
+                message = await queue.get()
+                yield {"event": "message", "data": json.dumps(message, ensure_ascii=False)}
+
+    return EventSourceResponse(event_generator())

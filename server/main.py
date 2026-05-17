@@ -25,12 +25,12 @@ from .broadcaster import broadcaster
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from pathlib import Path
 
+from .config import settings
 from .models import create_tables
 from .routes import router
 
-GUI_DIR = Path(__file__).parent.parent / "gui"
+GUI_DIR = settings.gui_dir
 
 
 logging.basicConfig(

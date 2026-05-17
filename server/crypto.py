@@ -29,14 +29,14 @@ WHY A FRESH NONCE EVERY TIME?
   Its only job is to make each encryption unique.
 """
 
-import os
 import base64
+import os
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+from .config import settings
 
-# 32 bytes = 256-bit key. os.urandom is cryptographically secure.
-# In production: load this from an environment variable, never hardcode it.
-_KEY: bytes = os.urandom(32)
+# Use a stable key derived from configuration so existing messages remain decryptable.
+_KEY: bytes = settings.encryption_key_bytes
 
 
 def encrypt(plaintext: str) -> str:

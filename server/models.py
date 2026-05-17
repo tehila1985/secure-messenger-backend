@@ -42,8 +42,9 @@ from datetime import datetime, timezone
 from sqlalchemy import create_engine, String, Text, DateTime
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
+from .config import settings
 
-DATABASE_URL = "sqlite:///./messenger.db"
+DATABASE_URL = settings.database_url
 
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False}, echo=False)
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)

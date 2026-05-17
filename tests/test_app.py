@@ -22,6 +22,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from server.main import app
 from server.models import Base, get_db
@@ -32,8 +33,12 @@ from server.crypto import encrypt, decrypt
 # Test database setup — uses a separate file, wiped before each test
 # ---------------------------------------------------------------------------
 
-TEST_DB_URL = "sqlite:///./test_messenger.db"
-test_engine = create_engine(TEST_DB_URL, connect_args={"check_same_thread": False})
+TEST_DB_URL = "sqlite:///:memory:"
+test_engine = create_engine(
+    TEST_DB_URL,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
 TestingSession = sessionmaker(bind=test_engine, autocommit=False, autoflush=False)
 
 

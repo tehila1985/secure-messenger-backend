@@ -57,6 +57,10 @@ A real-time encrypted messaging application built with FastAPI, SQLAlchemy, and 
 pip install -r requirements.txt
 ```
 
+### 1.1. Optional configuration
+
+Copy `.env.example` to `.env` and customize the values if you want to override defaults such as `SECRET_KEY`, `DATABASE_URL`, or `ENCRYPTION_KEY`.
+
 ### 2. Start the server
 
 ```bash

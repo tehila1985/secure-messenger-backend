@@ -60,22 +60,28 @@ USEFUL PATTERN — how to save a new row:
   db.refresh(new_user)   ← fills in the auto-generated id and created_at
 """
 
+import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from .models import User, Message, get_db
+from .auth import require_auth
+from .broadcaster import broadcaster
+from .errors import AuthenticationError, UserAlreadyExistsError, ValidationError
+from .models import get_db
 from .schemas import (
     RegisterRequest, LoginRequest, TokenResponse,
     SendMessageRequest, MessageResponse,
 )
-from .auth import hash_password, verify_password, create_token, require_auth
-from .crypto import encrypt, decrypt
-
-import json
-from .broadcaster import broadcaster
+from .services import (
+    AuthService,
+    MessageRepository,
+    MessageService,
+    UserRepository,
+)
 from sse_starlette.sse import EventSourceResponse
+
 log = logging.getLogger(__name__)
 router = APIRouter()
 
@@ -83,19 +89,34 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 # TODO 1 — Register a new user
 # ---------------------------------------------------------------------------
-@router.post("/register", status_code=status.HTTP_201_CREATED)
-def register(body: RegisterRequest, db: Session = Depends(get_db)):
-    existing_user = db.query(User).filter(User.username == body.username).first()
-    if existing_user:
-        raise HTTPException(status_code=400, detail="Username already taken")
+def get_user_repository(db: Session = Depends(get_db)) -> UserRepository:
+    return UserRepository(db)
 
-    new_user = User(
-        username=body.username,
-        password_hash=hash_password(body.password)
-    )
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
+
+def get_message_repository(db: Session = Depends(get_db)) -> MessageRepository:
+    return MessageRepository(db)
+
+
+def get_auth_service(user_repository: UserRepository = Depends(get_user_repository)) -> AuthService:
+    return AuthService(user_repository)
+
+
+def get_message_service(message_repository: MessageRepository = Depends(get_message_repository)) -> MessageService:
+    return MessageService(message_repository)
+
+
+@router.post("/register", status_code=status.HTTP_201_CREATED)
+def register(
+    body: RegisterRequest,
+    auth_service: AuthService = Depends(get_auth_service),
+):
+    try:
+        auth_service.register_user(body.username, body.password)
+    except UserAlreadyExistsError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except ValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+
     return {"message": "User created successfully"}
 
 
@@ -103,45 +124,32 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
 # TODO 2 — Login and receive a JWT token
 # ---------------------------------------------------------------------------
 @router.post("/login", response_model=TokenResponse)
-def login(body: LoginRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == body.username).first()
-    if not user or not verify_password(body.password, user.password_hash):
-        raise HTTPException(status_code=401, detail="Invalid username or password")
+def login(
+    body: LoginRequest,
+    auth_service: AuthService = Depends(get_auth_service),
+):
+    try:
+        user = auth_service.authenticate(body.username, body.password)
+    except AuthenticationError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password")
 
-    token = create_token(user.username)
+    token = auth_service.create_access_token(user.username)
     return {"access_token": token, "token_type": "bearer"}
 
 # ---------------------------------------------------------------------------
 # TODO 3 — Send a message (authenticated)
 # ---------------------------------------------------------------------------
 @router.post("/messages", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
-async def send_message(  # הוספת async
+async def send_message(
     body: SendMessageRequest,
-    db: Session = Depends(get_db),
+    message_service: MessageService = Depends(get_message_service),
     username: str = Depends(require_auth),
 ):
-    encrypted_content = encrypt(body.content)
+    new_message = message_service.send_message(username, body.recipient, body.content)
+    response_data = MessageResponse(**message_service.build_response(new_message))
 
-    new_msg = Message(
-        sender=username,
-        recipient=body.recipient,
-        ciphertext=encrypted_content
-    )
-    db.add(new_msg)
-    db.commit()
-    db.refresh(new_msg)
-
-   
-    response_data = MessageResponse(
-        id=new_msg.id,
-        sender=new_msg.sender,
-        recipient=new_msg.recipient,
-        content=body.content,  
-        created_at=new_msg.created_at
-    )
-
-    await broadcaster.publish(response_data.model_dump(mode="json"), target_user=None)
-    
+    target_user = None if body.recipient == "all" else body.recipient
+    await broadcaster.publish(response_data.model_dump(mode="json"), target_user=target_user)
     return response_data
 
 # ---------------------------------------------------------------------------
@@ -149,31 +157,16 @@ async def send_message(  # הוספת async
 # ---------------------------------------------------------------------------
 @router.get("/messages", response_model=list[MessageResponse])
 def get_messages(
-    db: Session = Depends(get_db),
+    message_service: MessageService = Depends(get_message_service),
     username: str = Depends(require_auth),
 ):
-    messages = db.query(Message).filter(
-        (Message.sender == username) | (Message.recipient == username)
-    ).all()
-
-    results = []
-    for msg in messages:
-        decrypted_content = decrypt(msg.ciphertext)
-        results.append(MessageResponse(
-            id=msg.id,
-            sender=msg.sender,
-            recipient=msg.recipient,
-            content=decrypted_content,
-            created_at=msg.created_at
-        ))
-    
-    return results
+    messages = message_service.fetch_messages(username)
+    return [MessageResponse(**message_service.build_response(msg)) for msg in messages]
 
 
 
 @router.get("/stream")
 async def message_stream(
-    db: Session = Depends(get_db),
     username: str = Depends(require_auth),
 ):
     """

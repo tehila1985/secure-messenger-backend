@@ -77,10 +77,11 @@ from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
+from .config import settings
 
-SECRET_KEY = "TehilaIsCuteAndSmartAndHashemLoveHer"   # In production, use a secure random key and keep it secret!
-ALGORITHM = "HS256"
-TOKEN_EXPIRE_HOURS = 24
+SECRET_KEY = settings.secret_key
+ALGORITHM = settings.algorithm
+TOKEN_EXPIRE_HOURS = settings.token_expire_hours
 
 _bearer = HTTPBearer()
 

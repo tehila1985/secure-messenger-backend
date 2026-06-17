@@ -16,6 +16,7 @@ from sqlalchemy.pool import StaticPool
 from server.main import app
 from server.models import Base, get_db
 from server.crypto import encrypt, decrypt
+from server.broadcaster import broadcaster
 
 # ---------------------------------------------------------------------------
 # Test-only credential constants — not real secrets; exist only for fixtures.
@@ -125,7 +126,11 @@ class TestAuthentication:
         token = register_and_login(client)
         response = client.get("/messages", headers=auth(token))
         assert response.status_code == 200
-
+    def test_stream_accepts_token_query_param(self, client):
+        token = register_and_login(client)
+        with client.stream("GET", f"/stream?token={token}") as response:
+            assert response.status_code == 200
+            assert response.headers["content-type"].startswith("text/event-stream")
 
 # ===========================================================================
 # 2. Encryption tests
@@ -216,3 +221,17 @@ class TestMessaging:
         assert alice_messages[0]["content"] == "hi bob"
         for msg in alice_messages:
             assert msg["content"] != "secret for bob"
+
+
+class TestBroadcaster:
+
+    def test_broadcaster_delivers_to_subscriber_queue(self):
+        import asyncio
+
+        async def run_test():
+            async with broadcaster.subscribe(TEST_USER_ALICE) as queue:
+                await broadcaster.publish({"test": "event"}, target_user=TEST_USER_ALICE)
+                message = await asyncio.wait_for(queue.get(), timeout=1.0)
+                assert message == {"test": "event"}
+
+        asyncio.run(run_test())

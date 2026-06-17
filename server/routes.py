@@ -7,6 +7,7 @@ Layer responsibilities:
   - Business logic lives exclusively in services.py.
 """
 
+import asyncio
 import json
 import logging
 
@@ -75,12 +76,16 @@ def register(
     body: RegisterRequest,
     auth_service: AuthService = Depends(get_auth_service),
 ) -> dict:
+    log.info("register attempt username=%s", body.username)
     try:
         auth_service.register_user(body.username, body.password)
     except UserAlreadyExistsError as exc:
+        log.warning("register failed duplicate username=%s", body.username)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     except ValidationError as exc:
+        log.warning("register failed validation username=%s error=%s", body.username, exc)
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    log.info("register success username=%s", body.username)
     return {"message": "User created successfully"}
 
 
@@ -92,8 +97,10 @@ def login(
     try:
         user = auth_service.authenticate(body.username, body.password)
     except AuthenticationError as exc:
+        log.warning("login failed username=%s", body.username)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc))
     token = auth_service.create_access_token(user.username)
+    log.info("login success username=%s", user.username)
     return {"access_token": token, "token_type": "bearer"}
 
 
@@ -103,6 +110,7 @@ async def send_message(
     message_service: MessageService = Depends(get_message_service),
     username: str = Depends(require_auth),
 ) -> MessageResponse:
+    log.info("send_message sender=%s recipient=%s", username, body.recipient)
     new_message = message_service.send_message(username, body.recipient, body.content)
     response_data = _to_response(new_message, message_service)
 
@@ -125,8 +133,13 @@ async def message_stream(username: str = Depends(require_auth)) -> EventSourceRe
 
     async def event_generator():
         async with broadcaster.subscribe(username) as queue:
-            while True:
-                message = await queue.get()
-                yield {"event": "message", "data": json.dumps(message, ensure_ascii=False)}
+            try:
+                while True:
+                    message = await queue.get()
+                    yield {"event": "message", "data": json.dumps(message, ensure_ascii=False)}
+            except asyncio.CancelledError:
+                log.info("SSE cancelled for user=%s", username)
+                raise
 
+    log.info("SSE connected for user=%s", username)
     return EventSourceResponse(event_generator())

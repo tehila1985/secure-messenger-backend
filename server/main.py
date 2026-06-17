@@ -23,6 +23,7 @@ import logging
 from contextlib import asynccontextmanager
 from .broadcaster import broadcaster
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
@@ -51,6 +52,14 @@ app = FastAPI(
     description="Authenticated, encrypted REST API for private messaging",
     version="1.0.0",
     lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.include_router(router)

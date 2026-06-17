@@ -86,9 +86,30 @@ function appendMsg(text, cls) {
 function startStream() {
   const url = `${BASE}/stream?token=${encodeURIComponent(token)}`;
 
-  // EventSource doesn't support custom headers — pass token as query param
-  // The server must accept ?token= as an alternative to Authorization header
-  // Fallback: use fetch-based SSE
+  if (window.EventSource) {
+    const source = new EventSource(url);
+
+    source.addEventListener("message", event => {
+      try {
+        const msg = JSON.parse(event.data);
+        const cls = msg.sender === me ? "outgoing" : "incoming";
+        appendMsg(`${msg.sender}: ${msg.content}`, cls);
+      } catch (e) {
+        console.log("SSE parse error:", e);
+      }
+    });
+
+    source.addEventListener("error", () => {
+      appendMsg("⚡ Stream disconnected. Retrying in 3s…", "status");
+      source.close();
+      setTimeout(startStream, 3000);
+    });
+
+    appendMsg("⚡ Connected to stream.", "status");
+    return;
+  }
+
+  // Fallback for environments without EventSource support.
   fetchSSE();
 }
 

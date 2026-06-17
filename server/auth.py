@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import bcrypt
 from jose import JWTError, jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Query, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from .config import settings
@@ -15,7 +15,7 @@ SECRET_KEY = settings.secret_key
 ALGORITHM = settings.algorithm
 TOKEN_EXPIRE_HOURS = settings.token_expire_hours
 
-_bearer = HTTPBearer()
+_bearer = HTTPBearer(auto_error=False)
 
 
 def hash_password(plain: str) -> str:
@@ -46,14 +46,27 @@ def decode_token(token: str) -> str | None:
         return None
 
 
-def require_auth(credentials: HTTPAuthorizationCredentials = Depends(_bearer)) -> str:
+def require_auth(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    token: str | None = Query(None),
+) -> str:
     """
-    FastAPI dependency: validate the Bearer token and return the username.
-    Raises HTTP 401 if the token is missing, invalid, or expired.
-    HTTPBearer raises HTTP 403 automatically when the header is absent entirely,
-    which satisfies the spec (unauthenticated → 403, bad token → 401).
+    FastAPI dependency: validate the Bearer token or query token and return the username.
+
+    Missing credentials raise 403, while invalid or expired tokens raise 401.
     """
-    username = decode_token(credentials.credentials)
+    auth_token = None
+    if credentials and credentials.credentials:
+        auth_token = credentials.credentials
+    elif token:
+        auth_token = token
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Authorization header or token query parameter required",
+        )
+
+    username = decode_token(auth_token)
     if not username:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

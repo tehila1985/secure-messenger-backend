@@ -142,8 +142,7 @@ Key design decisions:
 
 ### Passwords — bcrypt (one-way)
 Passwords are never stored. Only a bcrypt fingerprint is saved.
-At login, the typed password is re-hashed and compared — the original is never recovered.
-
+At login, the typed password is re-hashed and compared — the original is never recovered.In production, protect against enumeration and timing attacks with rate limiting and constant-time validation.
 ### Messages — AES-256-GCM (two-way)
 Messages are encrypted before being written to the database and decrypted only when returned to an authenticated user.
 A fresh random nonce is generated per message, so identical messages produce different ciphertexts.

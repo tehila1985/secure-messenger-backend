@@ -31,18 +31,24 @@ A real-time encrypted messaging application built with FastAPI, SQLAlchemy, and 
 
 ```
 ├── server/
-│   ├── main.py          # App entry point, router registration
-│   ├── routes.py        # All API route handlers
-│   ├── models.py        # SQLAlchemy database models (User, Message)
+│   ├── main.py          # App entry point, lifespan, router registration
+│   ├── routes.py        # HTTP route handlers + DTO construction (_to_response)
+│   ├── services.py      # Business logic (AuthService, MessageService)
+│   │                    # + Repository Protocols (IUserRepository, IMessageRepository)
+│   │                    # + Concrete SQLAlchemy repositories
+│   ├── models.py        # SQLAlchemy ORM models (User, Message)
 │   ├── schemas.py       # Pydantic request/response schemas
 │   ├── auth.py          # Password hashing + JWT logic
 │   ├── crypto.py        # AES-256-GCM encrypt/decrypt
-│   └── broadcaster.py   # SSE pub/sub broadcaster
+│   ├── broadcaster.py   # SSE pub/sub broadcaster (asyncio.Queue based)
+│   ├── errors.py        # Typed application exception hierarchy
+│   └── config.py        # Centralised settings (env-driven, no hardcoded secrets)
 ├── gui/
 │   ├── index.html       # Browser chat UI
-│   └── app.js           # Frontend logic
+│   └── app.js           # Frontend logic (fetch-based SSE)
 ├── tests/
-│   └── test_app.py      # Pytest test suite
+│   └── test_app.py      # Pytest test suite (17 tests, in-memory DB)
+├── pyproject.toml       # Project metadata + pytest config
 ├── requirements.txt
 └── run.bat              # Windows quick-start script
 ```
@@ -57,23 +63,41 @@ A real-time encrypted messaging application built with FastAPI, SQLAlchemy, and 
 pip install -r requirements.txt
 ```
 
-### 1.1. Optional configuration
+### 2. Configure environment (optional)
 
-Copy `.env.example` to `.env` and customize the values if you want to override defaults such as `SECRET_KEY`, `DATABASE_URL`, or `ENCRYPTION_KEY`.
-
-### 2. Start the server
+Copy `.env.example` to `.env` and set your own values:
 
 ```bash
+copy .env.example .env
+```
+
+Key variables:
+
+| Variable          | Default                  | Notes                                      |
+|-------------------|--------------------------|--------------------------------------------|
+| `SECRET_KEY`      | random (generated once)  | **Set this in production** or tokens reset on every restart |
+| `DATABASE_URL`    | `sqlite:///./messenger.db` |                                          |
+| `TOKEN_EXPIRE_HOURS` | `24`                  |                                            |
+| `ENCRYPTION_KEY`  | derived from SECRET_KEY  | Optional base64-encoded 32-byte key        |
+
+> ⚠️ If `SECRET_KEY` is not set, a new random key is generated on every server start —
+> all existing JWT tokens will be invalidated on restart. Always set it in production.
+
+### 3. Start the server
+
+**Make sure you are inside the inner project folder** (the one that contains `server/`):
+
+```bash
+cd secure-messenger-stage1-master   # if you haven't already
 uvicorn server.main:app --reload
 ```
 
 Or on Windows, double-click `run.bat`.
 
-### 3. Open the app
+### 4. Open the app
 
-Navigate to [http://localhost:8000](http://localhost:8000)
-
-Interactive API docs available at [http://localhost:8000/docs](http://localhost:8000/docs)
+- Chat UI → [http://localhost:8000](http://localhost:8000)
+- Interactive API docs → [http://localhost:8000/docs](http://localhost:8000/docs)
 
 ---
 
@@ -86,6 +110,31 @@ Interactive API docs available at [http://localhost:8000/docs](http://localhost:
 | POST   | `/messages`   | Yes           | Send an encrypted message          |
 | GET    | `/messages`   | Yes           | Fetch your messages (decrypted)    |
 | GET    | `/stream`     | Yes           | SSE stream for real-time messages  |
+
+---
+
+## Architecture
+
+The codebase follows a strict layered architecture:
+
+```
+HTTP Request
+    ↓
+routes.py         — HTTP concerns: validation, status codes, DTO construction
+    ↓
+services.py       — Business logic only (no HTTP, no JSON)
+    ↓
+IRepository       — Protocol interface (swappable for fakes in tests)
+    ↓
+models.py         — SQLAlchemy ORM / SQLite
+```
+
+Key design decisions:
+
+- **Repository Protocols** (`IUserRepository`, `IMessageRepository`) decouple services from SQLAlchemy — inject any compatible object in tests without touching the DB.
+- **No hardcoded secrets** — `config.py` reads everything from environment variables; missing `SECRET_KEY` generates a random one at startup (dev-safe, prod-unsafe by design).
+- **Custom exception hierarchy** (`errors.py`) — every exception carries a typed, contextual message. No raw strings passed around.
+- **DTO construction in the route layer** — `_to_response()` in `routes.py` builds `MessageResponse`; the service layer returns domain objects only.
 
 ---
 
@@ -102,6 +151,7 @@ A fresh random nonce is generated per message, so identical messages produce dif
 ### Authentication — JWT
 After login, the server issues a signed JWT token valid for 24 hours.
 Every protected route validates the token without a database lookup.
+Missing token → `403 Forbidden`. Invalid/expired token → `401 Unauthorized`.
 
 ---
 
@@ -110,6 +160,9 @@ Every protected route validates the token without a database lookup.
 ```bash
 pytest tests/ -v
 ```
+
+17 tests across three classes: `TestAuthentication`, `TestEncryption`, `TestMessaging`.
+All tests use an **in-memory SQLite database** — no test data ever touches `messenger.db`.
 
 ---
 

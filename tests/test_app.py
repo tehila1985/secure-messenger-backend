@@ -1,21 +1,10 @@
 """
 test_app.py — Stage 1 test suite.
 
-╔══════════════════════════════════════════════════════════════════════╗
-║  YOUR TASK: the test structure is given. Some tests are complete,   ║
-║  others have a TODO for you to finish.                              ║
-╚══════════════════════════════════════════════════════════════════════╝
-
 HOW TO RUN:
   pytest tests/ -v
 
-HOW TESTS WORK HERE:
-  We use FastAPI's TestClient — it sends real HTTP requests to your app
-  without needing to start a server. Each test gets a fresh, empty
-  database so tests never interfere with each other.
-
-  The test database is a separate file (test_messenger.db) and is
-  wiped clean before every single test.
+Each test gets a fresh in-memory database so tests never interfere with each other.
 """
 
 import pytest
@@ -28,9 +17,18 @@ from server.main import app
 from server.models import Base, get_db
 from server.crypto import encrypt, decrypt
 
+# ---------------------------------------------------------------------------
+# Test-only credential constants — not real secrets; exist only for fixtures.
+# ---------------------------------------------------------------------------
+TEST_USER_ALICE = "alice"
+TEST_PASS_ALICE = "secret123"
+TEST_USER_BOB = "bob"
+TEST_PASS_BOB = "secret456"
+TEST_USER_CHARLIE = "charlie"
+TEST_PASS_CHARLIE = "secret789"
 
 # ---------------------------------------------------------------------------
-# Test database setup — uses a separate file, wiped before each test
+# Test database setup — in-memory SQLite, wiped before each test
 # ---------------------------------------------------------------------------
 
 TEST_DB_URL = "sqlite:///:memory:"
@@ -70,7 +68,7 @@ def client():
 # Helpers
 # ---------------------------------------------------------------------------
 
-def register_and_login(client, username="alice", password="secret123") -> str:
+def register_and_login(client, username: str = TEST_USER_ALICE, password: str = TEST_PASS_ALICE) -> str:
     """Register a user and return their JWT token."""
     client.post("/register", json={"username": username, "password": password})
     response = client.post("/login", json={"username": username, "password": password})
@@ -88,31 +86,31 @@ def auth(token: str) -> dict:
 class TestAuthentication:
 
     def test_register_success(self, client):
-        response = client.post("/register", json={"username": "alice", "password": "secret123"})
+        response = client.post("/register", json={"username": TEST_USER_ALICE, "password": TEST_PASS_ALICE})
         assert response.status_code == 201
 
     def test_register_duplicate_username(self, client):
-        client.post("/register", json={"username": "alice", "password": "secret123"})
-        response = client.post("/register", json={"username": "alice", "password": "other-password"})
+        client.post("/register", json={"username": TEST_USER_ALICE, "password": TEST_PASS_ALICE})
+        response = client.post("/register", json={"username": TEST_USER_ALICE, "password": "other-password"})
         assert response.status_code == 400
 
     def test_register_password_too_short(self, client):
-        response = client.post("/register", json={"username": "alice", "password": "abc"})
-        assert response.status_code == 422   # Pydantic rejects it before your code runs
+        response = client.post("/register", json={"username": TEST_USER_ALICE, "password": "abc"})
+        assert response.status_code == 422   # Pydantic rejects it before service code runs
 
     def test_login_success(self, client):
-        client.post("/register", json={"username": "alice", "password": "secret123"})
-        response = client.post("/login", json={"username": "alice", "password": "secret123"})
+        client.post("/register", json={"username": TEST_USER_ALICE, "password": TEST_PASS_ALICE})
+        response = client.post("/login", json={"username": TEST_USER_ALICE, "password": TEST_PASS_ALICE})
         assert response.status_code == 200
         assert "access_token" in response.json()
 
     def test_login_wrong_password(self, client):
-        client.post("/register", json={"username": "alice", "password": "secret123"})
-        response = client.post("/login", json={"username": "alice", "password": "wrongpassword"})
+        client.post("/register", json={"username": TEST_USER_ALICE, "password": TEST_PASS_ALICE})
+        response = client.post("/login", json={"username": TEST_USER_ALICE, "password": "wrongpassword"})
         assert response.status_code == 401
 
     def test_login_unknown_user(self, client):
-        response = client.post("/login", json={"username": "ghost", "password": "secret123"})
+        response = client.post("/login", json={"username": "ghost", "password": TEST_PASS_ALICE})
         assert response.status_code == 401
 
     def test_messages_require_token(self, client):
@@ -143,7 +141,6 @@ class TestEncryption:
         assert decrypt(encrypt(original)) == original
 
     def test_same_message_encrypts_differently_each_time(self):
-        # fresh nonce every call → different ciphertext
         assert encrypt("hello") != encrypt("hello")
 
     def test_tampered_ciphertext_raises(self):
@@ -159,8 +156,8 @@ class TestEncryption:
 
         client.post(
             "/messages",
-            json={"content": original_text, "recipient": "bob"},
-            headers=auth(token)
+            json={"content": original_text, "recipient": TEST_USER_BOB},
+            headers=auth(token),
         )
 
         db = TestingSession()
@@ -178,45 +175,44 @@ class TestEncryption:
 class TestMessaging:
 
     def test_send_message_success(self, client):
-        alice_token = register_and_login(client, "alice", "secret123")
-        register_and_login(client, "bob", "secret456")
+        alice_token = register_and_login(client, TEST_USER_ALICE, TEST_PASS_ALICE)
+        register_and_login(client, TEST_USER_BOB, TEST_PASS_BOB)
 
         response = client.post(
             "/messages",
-            json={"content": "hello bob", "recipient": "bob"},
+            json={"content": "hello bob", "recipient": TEST_USER_BOB},
             headers=auth(alice_token),
         )
         assert response.status_code == 201
         data = response.json()
-        assert data["content"] == "hello bob"   # returned decrypted
-        assert data["sender"] == "alice"
-        assert data["recipient"] == "bob"
+        assert data["content"] == "hello bob"
+        assert data["sender"] == TEST_USER_ALICE
+        assert data["recipient"] == TEST_USER_BOB
 
     def test_get_messages_returns_decrypted(self, client):
-        alice_token = register_and_login(client, "alice", "secret123")
-        register_and_login(client, "bob", "secret456")
+        alice_token = register_and_login(client, TEST_USER_ALICE, TEST_PASS_ALICE)
+        register_and_login(client, TEST_USER_BOB, TEST_PASS_BOB)
 
-        client.post("/messages", json={"content": "hi bob", "recipient": "bob"}, headers=auth(alice_token))
+        client.post("/messages", json={"content": "hi bob", "recipient": TEST_USER_BOB}, headers=auth(alice_token))
 
         response = client.get("/messages", headers=auth(alice_token))
         assert response.status_code == 200
         messages = response.json()
         assert len(messages) >= 1
-        assert messages[0]["content"] == "hi bob"   # must be decrypted, not ciphertext
+        assert messages[0]["content"] == "hi bob"
 
     def test_user_sees_only_their_messages(self, client):
-        alice_token = register_and_login(client, "alice", "secret123")
-        bob_token   = register_and_login(client, "bob",   "secret456")
-        charlie_token = register_and_login(client, "charlie", "secret789")
+        alice_token   = register_and_login(client, TEST_USER_ALICE,   TEST_PASS_ALICE)
+        bob_token     = register_and_login(client, TEST_USER_BOB,     TEST_PASS_BOB)
+        charlie_token = register_and_login(client, TEST_USER_CHARLIE, TEST_PASS_CHARLIE)
 
-        client.post("/messages", json={"content": "hi bob", "recipient": "bob"}, headers=auth(alice_token))
-        client.post("/messages", json={"content": "secret for bob", "recipient": "bob"}, headers=auth(charlie_token))
+        client.post("/messages", json={"content": "hi bob",        "recipient": TEST_USER_BOB}, headers=auth(alice_token))
+        client.post("/messages", json={"content": "secret for bob","recipient": TEST_USER_BOB}, headers=auth(charlie_token))
 
         response = client.get("/messages", headers=auth(alice_token))
         alice_messages = response.json()
 
         assert len(alice_messages) == 1
         assert alice_messages[0]["content"] == "hi bob"
-
         for msg in alice_messages:
             assert msg["content"] != "secret for bob"
